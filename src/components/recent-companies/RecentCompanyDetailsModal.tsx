@@ -16,18 +16,20 @@ import {
   X,
   Cpu
 } from "lucide-react";
-import { RecentCompanyLead } from "@/types/recentCompanies";
+import { RecentCompanyLead, SentMessageRecord } from "@/types/recentCompanies";
 
 interface RecentCompanyDetailsModalProps {
   company: RecentCompanyLead | null;
   onClose: () => void;
   onOpenWhatsApp: (company: RecentCompanyLead) => void;
+  sentRecord?: SentMessageRecord | null;
 }
 
 export default function RecentCompanyDetailsModal({
   company,
   onClose,
   onOpenWhatsApp,
+  sentRecord,
 }: RecentCompanyDetailsModalProps) {
   if (!company) return null;
 
@@ -73,6 +75,12 @@ export default function RecentCompanyDetailsModal({
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
                 Aberta há {company.diasCriacao} dias ({company.dataAbertura})
               </span>
+              {sentRecord && (
+                <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-purple-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                  Mensagem Enviada ({sentRecord.status})
+                </span>
+              )}
             </div>
             <h2 className="text-xl font-bold text-slate-900 dark:text-white">
               {company.nomeFantasia}

@@ -88,3 +88,35 @@ export interface RecentCompaniesStats {
   capitalSocialMedio: number;
 }
 
+export type MessageStatus = 
+  | 'enviada' 
+  | 'aguardando' 
+  | 'respondeu' 
+  | 'reuniao_agendada' 
+  | 'fechou' 
+  | 'recusou';
+
+export interface SentMessageRecord {
+  id: string;
+  companyId: string;
+  cnpj: string;
+  razaoSocial: string;
+  nomeFantasia: string;
+  bairroRegiao: string;
+  enderecoCompleto: string;
+  telefoneFormatado: string;
+  telefoneWhatsapp: string;
+  socioNome: string;
+  setorRotulo?: string;
+  diasCriacao?: number;
+  mensagem: string;
+  enviadoEm: string;
+  status: MessageStatus;
+  observacoes?: string;
+  historicoEnvios?: Array<{
+    enviadoEm: string;
+    mensagem: string;
+  }>;
+}
+
+

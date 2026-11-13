@@ -18,16 +18,21 @@ import {
   Flame, 
   ChevronRight,
   Sparkles,
-  Loader2
+  Loader2,
+  BookmarkCheck,
+  CheckCircle2
 } from "lucide-react";
 import { 
   RecentCompanyLead, 
   CompanySector, 
-  RecentCompaniesStats 
+  RecentCompaniesStats,
+  SentMessageRecord
 } from "@/types/recentCompanies";
 import WhatsAppPitchModal from "./WhatsAppPitchModal";
 import RecentCompanyDetailsModal from "./RecentCompanyDetailsModal";
 import CnpjLookupModal from "./CnpjLookupModal";
+import SentMessagesModal from "./SentMessagesModal";
+import { getLocalSentMessages, fetchRemoteSentMessages } from "@/lib/recentMessagesStorage";
 
 interface RecentCompaniesDashboardProps {
   initialCompanies: RecentCompanyLead[];
@@ -40,6 +45,11 @@ export default function RecentCompaniesDashboard({
 }: RecentCompaniesDashboardProps) {
   // Lista dinâmica de leads (permite adicionar novos CNPJs consultados em tempo real)
   const [companiesList, setCompaniesList] = useState<RecentCompanyLead[]>(initialCompanies);
+
+  // Mensagens enviadas e controle de contatos
+  const [sentMessagesMap, setSentMessagesMap] = useState<Record<string, SentMessageRecord>>({});
+  const [isSentMessagesModalOpen, setIsSentMessagesModalOpen] = useState(false);
+  const [selectedContactFilter, setSelectedContactFilter] = useState<"todos" | "pendentes" | "contatados">("todos");
 
   // Filtros de estado
   const [selectedDays, setSelectedDays] = useState<number | null>(90); // default: 90 dias (sweet spot)
@@ -62,6 +72,67 @@ export default function RecentCompaniesDashboard({
   const [activeDetailsLead, setActiveDetailsLead] = useState<RecentCompanyLead | null>(null);
   const [isLookupModalOpen, setIsLookupModalOpen] = useState(false);
   const [isFetchingNew, setIsFetchingNew] = useState(false);
+
+  // Carregar e sincronizar mensagens enviadas (localStorage + API)
+  useEffect(() => {
+    // 1. Carrega imediatamente do localStorage
+    const local = getLocalSentMessages();
+    setSentMessagesMap(local);
+
+    // 2. Sincroniza em segundo plano com o arquivo persistente do servidor
+    fetchRemoteSentMessages().then((list) => {
+      if (Array.isArray(list)) {
+        const map: Record<string, SentMessageRecord> = {};
+        for (const item of list) {
+          if (item.companyId) map[item.companyId] = item;
+          if (item.cnpj) {
+            const clean = item.cnpj.replace(/\D/g, "");
+            if (clean) map[clean] = item;
+          }
+        }
+        setSentMessagesMap((prev) => ({ ...prev, ...map }));
+      }
+    });
+  }, []);
+
+  const refreshSentMessages = async () => {
+    const list = await fetchRemoteSentMessages();
+    const map: Record<string, SentMessageRecord> = {};
+    for (const item of list) {
+      if (item.companyId) map[item.companyId] = item;
+      if (item.cnpj) {
+        const clean = item.cnpj.replace(/\D/g, "");
+        if (clean) map[clean] = item;
+      }
+    }
+    setSentMessagesMap(map);
+  };
+
+  const handleMessageSent = (record: SentMessageRecord) => {
+    setSentMessagesMap((prev) => {
+      const next = { ...prev };
+      if (record.companyId) next[record.companyId] = record;
+      if (record.cnpj) {
+        const clean = record.cnpj.replace(/\D/g, "");
+        if (clean) next[clean] = record;
+      }
+      return next;
+    });
+  };
+
+  // Lista única de registros para o modal de enviados
+  const uniqueSentMessagesList = useMemo(() => {
+    const seen = new Set<string>();
+    const list: SentMessageRecord[] = [];
+    for (const rec of Object.values(sentMessagesMap)) {
+      const key = rec.cnpj ? rec.cnpj.replace(/\D/g, "") : rec.companyId;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        list.push(rec);
+      }
+    }
+    return list;
+  }, [sentMessagesMap]);
 
   // Estatísticas dinâmicas calculadas sobre o volume atual da base
   const dynamicStats = useMemo(() => {
@@ -176,7 +247,7 @@ export default function RecentCompaniesDashboard({
   // Reset de página ao alterar qualquer filtro
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedDays, selectedSector, selectedRegion, search, sortBy]);
+  }, [selectedDays, selectedSector, selectedRegion, search, sortBy, selectedContactFilter]);
 
   // Adicionar lead pesquisado via API aberta
   const handleAddLead = (newLead: RecentCompanyLead) => {
@@ -193,6 +264,16 @@ export default function RecentCompaniesDashboard({
   // Filtragem dinâmica
   const filteredCompanies = useMemo(() => {
     return companiesList.filter((c) => {
+      // Filtro de abordagem / mensagens enviadas
+      if (selectedContactFilter === "pendentes") {
+        const isContacted = Boolean(sentMessagesMap[c.id] || sentMessagesMap[c.cnpj.replace(/\D/g, "")]);
+        if (isContacted) return false;
+      }
+      if (selectedContactFilter === "contatados") {
+        const isContacted = Boolean(sentMessagesMap[c.id] || sentMessagesMap[c.cnpj.replace(/\D/g, "")]);
+        if (!isContacted) return false;
+      }
+
       // Filtro de tempo
       if (selectedDays !== null && c.diasCriacao > selectedDays) {
         return false;
@@ -237,7 +318,7 @@ export default function RecentCompaniesDashboard({
       }
       return 0;
     });
-  }, [companiesList, selectedDays, selectedSector, selectedRegion, search, sortBy]);
+  }, [companiesList, selectedDays, selectedSector, selectedRegion, search, sortBy, selectedContactFilter, sentMessagesMap]);
 
   // Paginação inteligente dos dados
   const totalPages = Math.ceil(filteredCompanies.length / pageSize) || 1;
@@ -365,6 +446,15 @@ export default function RecentCompaniesDashboard({
           >
             <Search className="w-4 h-4 text-blue-600 dark:text-blue-400" />
             <span>Consultar CNPJ via API Aberta</span>
+          </button>
+
+          <button
+            onClick={() => setIsSentMessagesModalOpen(true)}
+            className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs sm:text-sm font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 border border-emerald-200 dark:border-emerald-500/30 transition cursor-pointer shadow-xs"
+            title="Ver lista de todas as empresas e locais que já receberam mensagem"
+          >
+            <MessageSquare className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            <span>Locais Contatados ({uniqueSentMessagesList.length})</span>
           </button>
 
           <button
@@ -549,7 +639,56 @@ export default function RecentCompaniesDashboard({
           </div>
         </div>
 
-        {/* Linha 3: Barra de Busca, Região do DF e Ordenação */}
+        {/* Linha 3: Status de Contato & Mensagens Enviadas */}
+        <div className="space-y-2 pt-2 border-t border-slate-200/60 dark:border-white/[0.04]">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+              <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+              Status de Abordagem / Mensagens:
+            </span>
+            <span className="text-slate-400 text-[11px]">
+              Filtre empresas que já receberam mensagem ou continuam pendentes
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              onClick={() => setSelectedContactFilter("todos")}
+              className={`text-xs px-3 py-1.5 rounded-xl font-medium transition cursor-pointer ${
+                selectedContactFilter === "todos"
+                  ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-sm font-semibold"
+                  : "bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-white/[0.06]"
+              }`}
+            >
+              Todas as Empresas
+            </button>
+
+            <button
+              onClick={() => setSelectedContactFilter("pendentes")}
+              className={`text-xs px-3 py-1.5 rounded-xl font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                selectedContactFilter === "pendentes"
+                  ? "bg-amber-600 text-white shadow-sm font-semibold"
+                  : "bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-white/[0.06]"
+              }`}
+            >
+              <span>⏳ Pendentes (Não Contatadas)</span>
+            </button>
+
+            <button
+              onClick={() => setSelectedContactFilter("contatados")}
+              className={`text-xs px-3 py-1.5 rounded-xl font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                selectedContactFilter === "contatados"
+                  ? "bg-emerald-600 text-white shadow-sm font-semibold"
+                  : "bg-slate-100 hover:bg-slate-200 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-white/[0.06]"
+              }`}
+            >
+              <BookmarkCheck className="w-3.5 h-3.5" />
+              <span>📨 Mensagem Enviada ({uniqueSentMessagesList.length})</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Linha 4: Barra de Busca, Região do DF e Ordenação */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 border-t border-slate-200/60 dark:border-white/[0.04]">
           {/* Busca por Texto */}
           <div className="relative w-full sm:w-80">
@@ -629,6 +768,7 @@ export default function RecentCompaniesDashboard({
           const isSelected = selectedIds.includes(company.id);
           const dias = company.diasCriacao;
           const score = company.diagnosticoTecnologico.scoreSemSistema;
+          const sentRecord = sentMessagesMap[company.id] || sentMessagesMap[company.cnpj.replace(/\D/g, "")];
 
           return (
             <div
@@ -642,12 +782,12 @@ export default function RecentCompaniesDashboard({
               <div className="space-y-3">
                 {/* Header do Card com Checkbox, Idade e Score */}
                 <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <input
                       type="checkbox"
                       checked={isSelected}
                       onChange={() => handleToggleSelect(company.id)}
-                      className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 mt-0.5 cursor-pointer"
+                      className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4 cursor-pointer"
                     />
                     <span
                       className={`text-[10px] font-bold font-mono px-2 py-0.5 rounded-full flex items-center gap-1 ${
@@ -663,6 +803,16 @@ export default function RecentCompaniesDashboard({
                       {dias <= 7 && <Flame className="w-3 h-3 text-emerald-500" />}
                       {dias === 1 ? "Ontem (1 dia)" : `Aberta há ${dias} dias`}
                     </span>
+
+                    {sentRecord && (
+                      <span 
+                        className="text-[10px] font-bold font-mono px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 flex items-center gap-1"
+                        title={`Mensagem enviada em ${new Date(sentRecord.enviadoEm).toLocaleDateString('pt-BR')}`}
+                      >
+                        <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                        <span>Enviado</span>
+                      </span>
+                    )}
                   </div>
 
                   <span
@@ -739,10 +889,23 @@ export default function RecentCompaniesDashboard({
 
                 <button
                   onClick={() => setActiveWhatsAppLead(company)}
-                  className="flex-1 inline-flex items-center justify-center gap-1 text-xs font-semibold py-2 px-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-sm cursor-pointer"
+                  className={`flex-1 inline-flex items-center justify-center gap-1 text-xs font-semibold py-2 px-2.5 rounded-xl text-white transition shadow-sm cursor-pointer ${
+                    sentRecord
+                      ? "bg-emerald-700 hover:bg-emerald-800 ring-1 ring-emerald-500/30"
+                      : "bg-emerald-600 hover:bg-emerald-700"
+                  }`}
                 >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Script WhatsApp</span>
+                  {sentRecord ? (
+                    <>
+                      <BookmarkCheck className="w-3.5 h-3.5 text-emerald-200" />
+                      <span>Ver Script (Enviado)</span>
+                    </>
+                  ) : (
+                    <>
+                      <MessageSquare className="w-3.5 h-3.5" />
+                      <span>Script WhatsApp</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
@@ -835,7 +998,14 @@ export default function RecentCompaniesDashboard({
         </div>
       )}
 
-      {/* Modais de Script WhatsApp, Detalhes e Consulta de CNPJ em Tempo Real */}
+      {/* Modais de Script WhatsApp, Detalhes, Locais Contatados e Consulta de CNPJ em Tempo Real */}
+      <SentMessagesModal
+        isOpen={isSentMessagesModalOpen}
+        onClose={() => setIsSentMessagesModalOpen(false)}
+        sentMessages={uniqueSentMessagesList}
+        onRefresh={refreshSentMessages}
+      />
+
       <CnpjLookupModal
         isOpen={isLookupModalOpen}
         onClose={() => setIsLookupModalOpen(false)}
@@ -849,6 +1019,12 @@ export default function RecentCompaniesDashboard({
       <WhatsAppPitchModal
         company={activeWhatsAppLead}
         onClose={() => setActiveWhatsAppLead(null)}
+        existingSentRecord={
+          activeWhatsAppLead
+            ? (sentMessagesMap[activeWhatsAppLead.id] || sentMessagesMap[activeWhatsAppLead.cnpj.replace(/\D/g, "")])
+            : null
+        }
+        onMessageSent={handleMessageSent}
       />
 
       <RecentCompanyDetailsModal
@@ -858,6 +1034,11 @@ export default function RecentCompaniesDashboard({
           setActiveDetailsLead(null);
           setActiveWhatsAppLead(company);
         }}
+        sentRecord={
+          activeDetailsLead
+            ? (sentMessagesMap[activeDetailsLead.id] || sentMessagesMap[activeDetailsLead.cnpj.replace(/\D/g, "")])
+            : null
+        }
       />
     </div>
   );
